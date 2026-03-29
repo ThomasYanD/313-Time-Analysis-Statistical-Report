@@ -1,7 +1,4 @@
 # 313-Time-Analysis-Statistical-Report
-# Draft research question(RQ1 fixed, RQ2 need more discussion)
-# 1.RQ1 (Statistical Focus): "To what extent do the Total Live Births (TLB) and Total Fertility Rate (TFR) in Singapore exhibit non-stationary characteristics, and can simple ARIMA models capture the structural shifts observed between 1960 and 2012?"
-# 2.RQ2 (Contextual Focus): "How do socio-economic landmarks in Singapore’s history correlate with the observed 'shocks' in the TLB and TFR time series, and should these influences be modeled through deterministic trends or stochastic processes?"
 
 library(tidyverse)
 library(dplyr)
@@ -134,34 +131,53 @@ tfr_series |> filter(!is.na(D_Value)) |>
 
 # 5. Initial model fitting
 
+# Training set: 1960-2012
 tlb_train <- tlb_series |> filter(Year <= 2012)
 tfr_train <- tfr_series |> filter(Year <= 2012)
 
-# TLB: try ARIMA(1,1,0)
+# TLB: try ARIMA(0,1,0)
 tlb_model <- tlb_train |>
-  model(arima110 = ARIMA(Value ~ pdq(1,1,0)))
+  model(arima010 = ARIMA(Value ~ pdq(0,1,0)))
 tidy(tlb_model)
 glance(tlb_model)
 
 # Check residual - TLB
 augment(tlb_model) |> ACF(.resid,  lag_max = 20) |> autoplot() +
-  ggtitle("ACF of Residuals — TLB ARIMA(1,1,0) on log scale")
+  ggtitle("ACF of Residuals — TLB ARIMA(0,1,0)")
 
 augment(tlb_model) |> PACF(.resid, lag_max = 20) |> autoplot() +
-  ggtitle("PACF of Residuals — TLB ARIMA(1,1,0) on log scale")
+  ggtitle("PACF of Residuals — TLB ARIMA(0,1,0)")
 
-# TFR: try ARIMA(1,1,0)
+# TFR: try ARIMA(0,1,1)
 tfr_model <- tfr_train |>
-  model(arima110 = ARIMA(Value ~ pdq(1,1,0)))
+  model(arima011 = ARIMA(Value ~ 0 + pdq(0,1,1)))
 tidy(tfr_model)
 glance(tfr_model)
 
 # Check residuals - TFR
 augment(tfr_model) |> ACF(.resid,  lag_max = 20) |> autoplot() +
-  ggtitle("ACF of Residuals — TFR ARIMA(1,1,0)")
+  ggtitle("ACF of Residuals — TFR ARIMA(0,1,1)")
 
 augment(tfr_model) |> PACF(.resid, lag_max = 20) |> autoplot() +
-  ggtitle("PACF of Residuals — TFR ARIMA(1,1,0)")
+  ggtitle("PACF of Residuals — TFR ARIMA(0,1,1)")
 
+
+
+# 6. PRELIMINARY FORECAST (2013–2024)
+
+tlb_fc <- tlb_model |> forecast(h = 12)
+tfr_fc <- tfr_model |> forecast(h = 12)
+
+
+# Overlay forecast on full observed series
+tlb_series |> autoplot(Value) +
+  autolayer(tlb_fc) +
+  ggtitle("TLB: ARIMA(0,1,0) Forecast vs Observed (2013–2024)") +
+  xlab("Year") + ylab("Number of Live Births")
+
+tfr_series |> autoplot(Value) +
+  autolayer(tfr_fc) +
+  ggtitle("TFR: ARIMA(0,1,1) Forecast vs Observed (2013–2024)") +
+  xlab("Year") + ylab("TFR (children per woman)")
 
 
