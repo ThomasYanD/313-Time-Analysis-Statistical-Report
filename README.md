@@ -12,6 +12,8 @@ library(ggtime)
 library(fable)
 library(fpp3)
 
+# Data loading & cleaning
+
 # Load data
 raw_data <- read_csv("BirthsAndFertilityRatesAnnual.csv")
 raw_data
@@ -48,7 +50,7 @@ sg_ts <- data_final |>
   as_tsibble(index = Year, key = DataSeries)
 
 
-# Visualisation
+# 2. Visualisation
 
 # Extract TLB for plotting
 tlb_series <- sg_ts |> 
@@ -69,3 +71,97 @@ tfr_series |>
   autoplot(Value) +
   ggtitle("Total Fertility Rate in Singapore (1960–2024)") +
   xlab("Year") + ylab("TFR (children per woman)")
+
+
+
+# 3. Time series features analysis
+
+# ACF & PACF of TLB
+tlb_series |> ACF(Value, lag_max = 20)  |> autoplot() +
+  ggtitle("ACF of Total Live Births (raw)")
+
+tlb_series |> PACF(Value, lag_max = 20) |> autoplot() +
+  ggtitle("PACF of Total Live Births (raw)")
+
+# ACF & PACF of TFR
+tfr_series |> ACF(Value, lag_max = 20)  |> autoplot() +
+  ggtitle("ACF of Total Fertility Rate (raw)")
+
+tfr_series |> PACF(Value, lag_max = 20) |> autoplot() +
+  ggtitle("PACF of Total Fertility Rate (raw)")
+
+# Portmanteau tests
+tlb_series |> features(Value, portmanteau_tests)
+tfr_series |> features(Value, portmanteau_tests)
+
+
+
+# 4. Time series features analysis2 - Stationary Check
+
+# Plot first difference
+tlb_series <- tlb_series |> mutate(D_Value = difference(Value, lag = 1))
+tfr_series <- tfr_series |> mutate(D_Value = difference(Value, lag = 1))
+
+# TLB
+tlb_series |> autoplot(D_Value) +
+  ggtitle("First Difference of Total Live Births") +
+  xlab("Year") + ylab("Change in Live Births")
+
+# TFR
+tfr_series |> autoplot(D_Value) +
+  ggtitle("First Difference of Total Fertility Rate") +
+  xlab("Year") + ylab("Change in TFR")
+
+# ACF & PACF of first differences for TLB
+tlb_series |> filter(!is.na(D_Value)) |>
+  ACF(D_Value, lag_max = 20) |> autoplot() +
+  ggtitle("ACF of First-Differenced TLB")
+
+tlb_series |> filter(!is.na(D_Value)) |>
+  PACF(D_Value, lag_max = 20) |> autoplot() +
+  ggtitle("PACF of First-Differenced TLB")
+
+# ACF & PACF of first differences for TFR
+tfr_series |> filter(!is.na(D_Value)) |>
+  ACF(D_Value, lag_max = 20) |> autoplot() +
+  ggtitle("ACF of First-Differenced TFR")
+
+tfr_series |> filter(!is.na(D_Value)) |>
+  PACF(D_Value, lag_max = 20) |> autoplot() +
+  ggtitle("PACF of First-Differenced TFR")
+
+
+
+# 5. Initial model fitting
+
+tlb_train <- tlb_series |> filter(Year <= 2012)
+tfr_train <- tfr_series |> filter(Year <= 2012)
+
+# TLB: try ARIMA(1,1,0)
+tlb_model <- tlb_train |>
+  model(arima110 = ARIMA(Value ~ pdq(1,1,0)))
+tidy(tlb_model)
+glance(tlb_model)
+
+# Check residual - TLB
+augment(tlb_model) |> ACF(.resid,  lag_max = 20) |> autoplot() +
+  ggtitle("ACF of Residuals — TLB ARIMA(1,1,0) on log scale")
+
+augment(tlb_model) |> PACF(.resid, lag_max = 20) |> autoplot() +
+  ggtitle("PACF of Residuals — TLB ARIMA(1,1,0) on log scale")
+
+# TFR: try ARIMA(1,1,0)
+tfr_model <- tfr_train |>
+  model(arima110 = ARIMA(Value ~ pdq(1,1,0)))
+tidy(tfr_model)
+glance(tfr_model)
+
+# Check residuals - TFR
+augment(tfr_model) |> ACF(.resid,  lag_max = 20) |> autoplot() +
+  ggtitle("ACF of Residuals — TFR ARIMA(1,1,0)")
+
+augment(tfr_model) |> PACF(.resid, lag_max = 20) |> autoplot() +
+  ggtitle("PACF of Residuals — TFR ARIMA(1,1,0)")
+
+
+
