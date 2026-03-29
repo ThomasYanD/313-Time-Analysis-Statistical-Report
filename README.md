@@ -4,10 +4,13 @@
 # 2.RQ2 (Contextual Focus): "How do socio-economic landmarks in Singapore’s history correlate with the observed 'shocks' in the TLB and TFR time series, and should these influences be modeled through deterministic trends or stochastic processes?"
 
 library(tidyverse)
+library(dplyr)
+library(feasts)
 library(tsibble)
 library(ggplot2)
 library(ggtime)
 library(fable)
+library(fpp3)
 
 # Load data
 raw_data <- read_csv("BirthsAndFertilityRatesAnnual.csv")
@@ -33,12 +36,12 @@ data_selected <- data_long |>
       DataSeries == "Total Fertility Rate (TFR)"
   )
 
-# filter 1960 - 2024
+# Convert to numeric, filter 1960–2024, drop any NA rows
 data_final <- data_selected |>
-  mutate(Year = as.numeric(Year)) |>
-  mutate(Value = as.numeric(Value)) |>
-  filter(Year >= 1960 & Year <= 2024)
-
+  mutate(Year  = as.numeric(Year),
+         Value = as.numeric(Value)) |>
+  filter(Year >= 1960 & Year <= 2024) |>
+  filter(!is.na(Value))
 
 # tsibble 
 sg_ts <- data_final |>
@@ -56,26 +59,13 @@ tfr_series <- sg_ts |>
   filter(DataSeries == "Total Fertility Rate (TFR)")
 
 # Plot 1: Total Live Births (TLB)
-ggplot(tlb_series, aes(x = Year, y = Value)) +
-  geom_line(color = "blue") +
-  ggtitle("Total Live Births in Singapore (1960-2024)") +
-  xlab("Year") +
-  ylab("Number of Births")
+tlb_series |>
+  autoplot(Value) +
+  ggtitle("Total Live Births in Singapore (1960–2024)") +
+  xlab("Year") + ylab("Number of Live Births")
 
 # Plot 2: Total Fertility Rate (TFR)
-ggplot(tfr_series, aes(x = Year, y = Value)) +
-  geom_line(color = "red") +
-  ggtitle("Total Fertility Rate in Singapore (1960-2024)") +
-  xlab("Year") +
-  ylab("TFR (per woman)")
-
-
-
-
-
-
-
-
-
-
-
+tfr_series |>
+  autoplot(Value) +
+  ggtitle("Total Fertility Rate in Singapore (1960–2024)") +
+  xlab("Year") + ylab("TFR (children per woman)")
