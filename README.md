@@ -135,6 +135,15 @@ tfr_series |> filter(!is.na(D_Value)) |>
 tlb_train <- tlb_series |> filter(Year <= 2012)
 tfr_train <- tfr_series |> filter(Year <= 2012)
 
+# Choice of ARIMA
+tlb_best_fit <- tlb_train |>
+  model(auto_arima = ARIMA(Value, stepwise = FALSE, approximation = FALSE))
+report(tlb_best_fit)
+
+tfr_best_fit <- tfr_train |>
+  model(auto_arima = ARIMA(Value, stepwise = FALSE, approximation = FALSE))
+report(tfr_best_fit)
+
 # TLB: try ARIMA(0,1,0)
 tlb_model <- tlb_train |>
   model(arima010 = ARIMA(Value ~ pdq(0,1,0)))
@@ -148,22 +157,22 @@ augment(tlb_model) |> ACF(.resid,  lag_max = 20) |> autoplot() +
 augment(tlb_model) |> PACF(.resid, lag_max = 20) |> autoplot() +
   ggtitle("PACF of Residuals — TLB ARIMA(0,1,0)")
 
-# TFR: try ARIMA(0,1,1)
+# TFR: try ARIMA(1,1,0)
 tfr_model <- tfr_train |>
-  model(arima011 = ARIMA(Value ~ 0 + pdq(0,1,1)))
+  model(arima110 = ARIMA(Value ~ 0 + pdq(1,1,0)))
 tidy(tfr_model)
 glance(tfr_model)
 
 # Check residuals - TFR
 augment(tfr_model) |> ACF(.resid,  lag_max = 20) |> autoplot() +
-  ggtitle("ACF of Residuals — TFR ARIMA(0,1,1)")
+  ggtitle("ACF of Residuals — TFR ARIMA(1,1,0)")
 
 augment(tfr_model) |> PACF(.resid, lag_max = 20) |> autoplot() +
-  ggtitle("PACF of Residuals — TFR ARIMA(0,1,1)")
+  ggtitle("PACF of Residuals — TFR ARIMA(1,1,0)")
 
 
 
-# 6. PRELIMINARY FORECAST (2013–2024)
+# 6. Preliminary forecast (2013–2024)
 
 tlb_fc <- tlb_model |> forecast(h = 12)
 tfr_fc <- tfr_model |> forecast(h = 12)
