@@ -1,0 +1,164 @@
+# 313-Time-Analysis-Statistical-Report
+
+library(tidyverse)
+library(dplyr)
+library(feasts)
+library(tsibble)
+library(ggplot2)
+library(ggtime)
+library(fable)
+library(fpp3)
+
+
+# 1. DATA LOADING & CLEANING
+
+raw_data <- read_csv("BirthsAndFertilityRatesAnnual.csv")
+
+raw_data_char <- raw_data |>
+  mutate(across(everything(), as.character))
+
+data_long <- raw_data_char |>
+  pivot_longer(
+    cols = -DataSeries,
+    names_to = "Year",
+    values_to = "Value"
+  )
+
+data_selected <- data_long |>
+  filter(
+    DataSeries == "Total Live-Births" |
+      DataSeries == "Total Fertility Rate (TFR)"
+  )
+
+data_final <- data_selected |>
+  mutate(Year  = as.numeric(Year),
+         Value = as.numeric(Value)) |>
+  filter(Year >= 1960 & Year <= 2024) |>
+  filter(!is.na(Value))
+
+sg_ts <- data_final |>
+  as_tsibble(index = Year, key = DataSeries)
+
+tlb_series <- sg_ts |> filter(DataSeries == "Total Live-Births")
+tfr_series <- sg_ts |> filter(DataSeries == "Total Fertility Rate (TFR)")
+
+
+# 2. VISUALISATION
+
+tlb_series |>
+  autoplot(Value) +
+  ggtitle("Total Live Births in Singapore (1960-2024)") +
+  xlab("Year") + ylab("Number of Live Births")
+
+tfr_series |>
+  autoplot(Value) +
+  ggtitle("Total Fertility Rate in Singapore (1960-2024)") +
+  xlab("Year") + ylab("TFR (children per woman)")
+
+
+# 3. TRANSFORMATION & DIFFERENCING
+
+
+# TLB: log transformation (large scale, possible curvature)
+# then first difference to remove trend
+tlb_series <- tlb_series |>
+  mutate(log_Value  = log(Value),
+         D_log      = difference(log(Value)))
+
+# TFR: first difference is not sufficient (ACF still shows structure)
+# apply second-order difference
+tfr_series <- tfr_series |>
+  mutate(D_Value  = difference(Value),
+         D2_Value = difference(difference(Value)))
+
+# Plot log-differenced TLB
+tlb_series |> autoplot(D_log) +
+  ggtitle("First Difference of log(TLB)") +
+  xlab("Year") + ylab("Change in log(TLB)")
+
+# Plot second-differenced TFR
+tfr_series |> autoplot(D2_Value) +
+  ggtitle("Second Difference of TFR") +
+  xlab("Year") + ylab("Second Difference of TFR")
+
+
+# 4. ACF & PACF — AFTER TRANSFORMATION
+# (lag_max = 30 to detect longer-range structure)
+
+# TLB: log-differenced series
+tlb_series |> filter(!is.na(D_log)) |>
+  ACF(D_log, lag_max = 30) |> autoplot() +
+  ggtitle("ACF of First-Differenced log(TLB)")
+
+tlb_series |> filter(!is.na(D_log)) |>
+  PACF(D_log, lag_max = 30) |> autoplot() +
+  ggtitle("PACF of First-Differenced log(TLB)")
+
+# TFR: second-differenced series
+tfr_series |> filter(!is.na(D2_Value)) |>
+  ACF(D2_Value, lag_max = 30) |> autoplot() +
+  ggtitle("ACF of Second-Differenced TFR")
+
+tfr_series |> filter(!is.na(D2_Value)) |>
+  PACF(D2_Value, lag_max = 30) |> autoplot() +
+  ggtitle("PACF of Second-Differenced TFR")
+
+# Portmanteau tests on transformed series
+tlb_series |> filter(!is.na(D_log))    |> features(D_log,    portmanteau_tests)
+tfr_series |> filter(!is.na(D2_Value)) |> features(D2_Value, portmanteau_tests)
+
+
+# 5. INITIAL MODEL FITTING (training period: 1960-2012)
+# Models identified manually from ACF/PACF above
+
+tlb_train <- tlb_series |> filter(Year <= 2012)
+tfr_train <- tfr_series |> filter(Year <= 2012)
+
+# --- TLB: fit on log scale ---
+# [Update pdq() after inspecting the ACF/PACF plots above]
+tlb_model <- tlb_train |>
+  model(arima_tlb = ARIMA(log(Value) ~ pdq(0,1,1)))
+
+tidy(tlb_model)
+glance(tlb_model)
+
+augment(tlb_model) |> ACF(.resid, lag_max = 30) |> autoplot() +
+  ggtitle("ACF of Residuals - TLB")
+
+augment(tlb_model) |> PACF(.resid, lag_max = 30) |> autoplot() +
+  ggtitle("PACF of Residuals - TLB")
+
+augment(tlb_model) |> features(.resid, portmanteau_tests)
+
+
+# --- TFR: fit on second-differenced scale ---
+# [Update pdq() after inspecting the ACF/PACF plots above]
+tfr_model <- tfr_train |>
+  model(arima_tfr = ARIMA(Value ~ pdq(0,2,1)))
+
+tidy(tfr_model)
+glance(tfr_model)
+
+augment(tfr_model) |> ACF(.resid, lag_max = 30) |> autoplot() +
+  ggtitle("ACF of Residuals - TFR")
+
+augment(tfr_model) |> PACF(.resid, lag_max = 30) |> autoplot() +
+  ggtitle("PACF of Residuals - TFR")
+
+augment(tfr_model) |> features(.resid, portmanteau_tests)
+
+
+# 6. PRELIMINARY FORECAST (2013-2024)
+
+tlb_fc <- tlb_model |> forecast(h = 12)
+tfr_fc <- tfr_model |> forecast(h = 12)
+
+tlb_series |> autoplot(Value) +
+  autolayer(tlb_fc) +
+  ggtitle("TLB: Forecast vs Observed (2013-2024)") +
+  xlab("Year") + ylab("Number of Live Births")
+
+tfr_series |> autoplot(Value) +
+  autolayer(tfr_fc) +
+  ggtitle("TFR: Forecast vs Observed (2013-2024)") +
+  xlab("Year") + ylab("TFR (children per woman)")
