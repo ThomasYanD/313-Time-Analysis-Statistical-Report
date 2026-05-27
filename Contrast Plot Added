@@ -1,0 +1,260 @@
+library(tidyverse)
+library(feasts)
+library(tsibble)
+library(fable)
+library(fpp3)
+library(urca)        
+
+
+# 1. DATA LOADING & CLEANING
+
+
+raw_data <- read_csv("BirthsAndFertilityRatesAnnual.csv")
+
+sg_ts <- raw_data |>
+  mutate(across(everything(), as.character)) |>
+  pivot_longer(cols = -DataSeries, names_to = "Year", values_to = "Value") |>
+  filter(DataSeries %in% c("Total Live-Births",
+                           "Total Fertility Rate (TFR)")) |>
+  mutate(Year  = as.numeric(Year),
+         Value = as.numeric(Value)) |>
+  filter(Year >= 1960 & Year <= 2024, !is.na(Value)) |>
+  as_tsibble(index = Year, key = DataSeries)
+
+tlb_series <- sg_ts |> filter(DataSeries == "Total Live-Births")
+tfr_series <- sg_ts |> filter(DataSeries == "Total Fertility Rate (TFR)")
+
+
+
+# 2. VISUALISATION
+
+
+tlb_series |> autoplot(Value) +
+  ggtitle("Total Live Births in Singapore (1960–2024)") +
+  xlab("Year") + ylab("Number of Live Births")
+
+tfr_series |> autoplot(Value) +
+  ggtitle("Total Fertility Rate in Singapore (1960–2024)") +
+  xlab("Year") + ylab("TFR (children per woman)")
+
+
+
+# 3. FORMAL UNIT ROOT TESTS
+
+
+# KPSS
+# TLB: level
+tlb_series |> features(Value, unitroot_kpss)
+# TLB: log-level
+tlb_series |> features(log(Value), unitroot_kpss)
+# TLB: log-differenced
+tlb_series |>
+  mutate(D_log = difference(log(Value))) |>
+  filter(!is.na(D_log)) |>
+  features(D_log, unitroot_kpss)
+
+# TFR: level
+tfr_series |> features(Value, unitroot_kpss)
+# TFR: first diff
+tfr_series |>
+  mutate(D_Value = difference(Value)) |>
+  filter(!is.na(D_Value)) |>
+  features(D_Value, unitroot_kpss)
+# TFR: second diff
+tfr_series |>
+  mutate(D2_Value = difference(difference(Value))) |>
+  filter(!is.na(D2_Value)) |>
+  features(D2_Value, unitroot_kpss)
+
+# ndiffs() 
+tlb_series |> features(log(Value), unitroot_ndiffs)   
+tfr_series |> features(Value, unitroot_ndiffs)        
+
+
+adf_tlb <- ur.df(diff(log(na.omit(tlb_series$Value))), type = "drift", lags = 3)
+summary(adf_tlb)
+
+adf_tfr_d2 <- ur.df(diff(diff(na.omit(tfr_series$Value))), type = "drift", lags = 3)
+summary(adf_tfr_d2)
+
+
+
+# 4. TRANSFORMATION & DIFFERENCING
+
+
+tlb_series <- tlb_series |>
+  mutate(log_Value = log(Value),
+         D_log     = difference(log(Value)))
+
+tfr_series <- tfr_series |>
+  mutate(D_Value  = difference(Value),
+         D2_Value = difference(difference(Value)))
+
+tlb_series |> autoplot(D_log) +
+  ggtitle("First Difference of log(TLB)") + xlab("Year") + ylab("Δlog(TLB)")
+
+tfr_series |> autoplot(D2_Value) +
+  ggtitle("Second Difference of TFR") + xlab("Year") + ylab("Δ²TFR")
+
+
+
+# 5. ACF & PACF（lag_max = 30）
+
+
+tlb_series |> filter(!is.na(D_log)) |>
+  ACF(D_log, lag_max = 30) |> autoplot() + ggtitle("ACF: Δlog(TLB)")
+
+tlb_series |> filter(!is.na(D_log)) |>
+  PACF(D_log, lag_max = 30) |> autoplot() + ggtitle("PACF: Δlog(TLB)")
+
+tfr_series |> filter(!is.na(D2_Value)) |>
+  ACF(D2_Value, lag_max = 30) |> autoplot() + ggtitle("ACF: Δ²TFR")
+
+tfr_series |> filter(!is.na(D2_Value)) |>
+  PACF(D2_Value, lag_max = 30) |> autoplot() + ggtitle("PACF: Δ²TFR")
+
+# Portmanteau test
+tlb_series |> filter(!is.na(D_log))    |> features(D_log,    portmanteau_tests)
+tfr_series |> filter(!is.na(D2_Value)) |> features(D2_Value, portmanteau_tests)
+
+
+
+# 6. CANDIDATE MODEL FITTING  
+
+
+tlb_train <- tlb_series |> filter(Year <= 2012)
+tfr_train <- tfr_series |> filter(Year <= 2012)
+
+# TLB: 3 models
+
+tlb_models <- tlb_train |>
+  model(
+    arima011 = ARIMA(log(Value) ~ pdq(0, 1, 1)),
+    arima110 = ARIMA(log(Value) ~ pdq(1, 1, 0)),
+    arima111 = ARIMA(log(Value) ~ pdq(1, 1, 1)),
+    auto     = ARIMA(log(Value))                 # stepwise auto-selection
+  )
+
+# TFR
+tfr_models <- tfr_train |>
+  model(
+    arima021 = ARIMA(Value ~ pdq(0, 2, 1)),
+    arima022 = ARIMA(Value ~ pdq(0, 2, 2)),
+    arima121 = ARIMA(Value ~ pdq(1, 2, 1)),
+    auto     = ARIMA(Value)
+  )
+
+
+
+# 7. AIC / BIC
+
+
+# TLB
+tlb_ic <- glance(tlb_models) |>
+  select(.model, AIC, AICc, BIC) |>
+  arrange(AICc)
+print(tlb_ic)
+
+# TFR
+tfr_ic <- glance(tfr_models) |>
+  select(.model, AIC, AICc, BIC) |>
+  arrange(AICc)
+print(tfr_ic)
+
+# coeffient
+tidy(tlb_models |> select(arima011))
+tidy(tfr_models |> select(arima021))
+
+
+
+# 8. RESIDUAL DIAGNOSTICS
+
+
+# TLB residual ACF
+for (m in c("arima011", "arima110", "arima111", "auto")) {
+  p <- augment(tlb_models |> select(all_of(m))) |>
+    ACF(.resid, lag_max = 30) |> autoplot() +
+    ggtitle(paste("ACF of Residuals – TLB:", m))
+  print(p)
+}
+
+# Ljung-Box 汇总
+tlb_lb <- augment(tlb_models) |>
+  features(.resid, ljung_box, lag = 10) |>
+  select(.model, lb_stat, lb_pvalue)
+print(tlb_lb)
+
+tfr_lb <- augment(tfr_models) |>
+  features(.resid, ljung_box, lag = 10) |>
+  select(.model, lb_stat, lb_pvalue)
+print(tfr_lb)
+
+
+
+# 9. FORECAST ACCURACY 
+
+
+tlb_fc <- tlb_models |> forecast(h = 12)
+tfr_fc <- tfr_models |> forecast(h = 12)
+
+# accuracy() 自动比对测试集真实值
+tlb_acc <- tlb_fc |>
+  accuracy(tlb_series) |>
+  select(.model, RMSE, MAE, MAPE, MASE) |>
+  arrange(RMSE)
+print(tlb_acc)
+
+tfr_acc <- tfr_fc |>
+  accuracy(tfr_series) |>
+  select(.model, RMSE, MAE, MAPE, MASE) |>
+  arrange(RMSE)
+print(tfr_acc)
+
+
+
+# 10. PRELIMINARY FORECAST PLOTS
+
+tlb_series |> autoplot(Value) +
+  autolayer(tlb_fc, level = 95) +
+  facet_wrap(~ .model) +
+  ggtitle("TLB: Candidate Model Forecasts vs Observed (2013–2024)") +
+  xlab("Year") + ylab("Live Births")
+
+tfr_series |> autoplot(Value) +
+  autolayer(tfr_fc, level = 95) +
+  facet_wrap(~ .model) +
+  ggtitle("TFR: Candidate Model Forecasts vs Observed (2013–2024)") +
+  xlab("Year") + ylab("TFR (children per woman)")
+
+
+
+# 11. STRUCTURAL BREAK EXPLORATION  --- RQ2 
+
+tfr_series |> autoplot(Value) +
+  geom_vline(xintercept = c(1987, 2001, 2004, 2008, 2020),
+             linetype = "dashed", colour = "red", alpha = 0.6) +
+  annotate("text", x = c(1987, 2001, 2004, 2008, 2020),
+           y = 1.0,
+           label = c("SDP", "Baby\nBonus", "Enhanced\nBonus", "GFC", "COVID"),
+           size = 2.8, angle = 90, vjust = -0.3) +
+  ggtitle("TFR with Potential Structural Break Candidates") +
+  xlab("Year") + ylab("TFR")
+
+tfr_series <- tfr_series |>
+  mutate(
+    d_babybonus  = as.numeric(Year >= 2001),
+    d_covid      = as.numeric(Year >= 2020)
+  )
+
+
+# 12. Figure: Prediction vs Reality
+tlb_best_fc <- tlb_models |> select(arima011) |> forecast(h = 12)
+
+tlb_series |> autoplot(Value) +
+  autolayer(tlb_best_fc, level = 95, colour = "steelblue") +
+  geom_vline(xintercept = 2012, linetype = "dashed") +
+  annotate("text", x = 2012, y = max(tlb_series$Value),
+           label = "Train | Test", hjust = 1.1, size = 3) +
+  ggtitle("TLB: ARIMA(0,1,1) Forecast vs Observed") +
+  xlab("Year") + ylab("Live Births")
+
